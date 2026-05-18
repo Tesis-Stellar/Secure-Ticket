@@ -258,6 +258,80 @@ test('indexer integration replays boleto_revendido idempotently and authorizes N
   assert.deepEqual(transfer, { ok: true, nftContractAddress: fixture.nftContractAddress, version: 1 });
 });
 
+test('indexer integration scopes primary-P2P cancellation below the buyer version', async () => {
+  // Models the indexer/secure-ticket ordering race: a buyer v1 ACTIVE row is
+  // already projected when boleto_comprado_primario (P2P) lands. Without the
+  // version<1 scope on the cancellation updateMany, the handler cancels every
+  // ACTIVE row for the root (including the buyer's v1) and then skips create()
+  // because alreadyCreated is truthy -> the buyer ends with no active ticket
+  // and it vanishes from "Mis Entradas".
+  const fixture = await createIndexerFixture('primaryp2p');
+  const rootId = Number(String(Date.now()).slice(-6));
+  const txHash = `tx-primary-p2p-${rootId}`;
+
+  await prisma.tickets.create({
+    data: {
+      ticket_code: `IDX-PP2P-S-${rootId}`,
+      contract_address: fixture.contractAddress,
+      ticket_root_id: rootId,
+      version: 0,
+      status: 'ACTIVE',
+      owner_wallet: fixture.sellerWallet,
+      owner_user_id: fixture.seller.id,
+      is_for_sale: true,
+      resale_price: 5000n,
+    },
+  });
+  await prisma.tickets.create({
+    data: {
+      ticket_code: `IDX-PP2P-B-${rootId}`,
+      contract_address: fixture.contractAddress,
+      ticket_root_id: rootId,
+      version: 1,
+      status: 'ACTIVE',
+      owner_wallet: fixture.buyerWallet,
+      owner_user_id: fixture.buyer.id,
+      is_for_sale: false,
+    },
+  });
+
+  const result = await processIndexerEvent(prisma, {
+    evt: { txHash, ledger: 250 },
+    eventName: 'boleto_comprado_primario',
+    contractId: fixture.contractAddress,
+    topics: ['boleto_comprado_primario', rootId, 1],
+    data: {
+      vendedor: fixture.sellerWallet,
+      comprador: fixture.buyerWallet,
+      precio: 5000n,
+    },
+    fallbackLedger: 250,
+  });
+  assert.equal(result.status, 'processed');
+
+  const versions = await prisma.tickets.findMany({
+    where: { contract_address: fixture.contractAddress, ticket_root_id: rootId },
+    orderBy: { version: 'asc' },
+    select: { version: true, status: true, owner_wallet: true, lifecycle_reason: true, is_for_sale: true },
+  });
+  assert.deepEqual(versions, [
+    {
+      version: 0,
+      status: 'CANCELLED',
+      owner_wallet: fixture.sellerWallet,
+      lifecycle_reason: 'PRIMARY_P2P_REPLACED',
+      is_for_sale: false,
+    },
+    {
+      version: 1,
+      status: 'ACTIVE',
+      owner_wallet: fixture.buyerWallet,
+      lifecycle_reason: null,
+      is_for_sale: false,
+    },
+  ]);
+});
+
 test('indexer integration can retry a FAILED event once the missing previous ticket exists', async () => {
   const fixture = await createIndexerFixture('retry');
   const rootId = Number(String(Date.now()).slice(-6));

@@ -149,8 +149,13 @@ async function applyIndexerProjection(
         where: { contract_address: contractId, ticket_root_id: rootId, version: 1 },
         select: { id: true },
       });
+      // Scope the cancellation to versions below the buyer's new row (v1). The
+      // seller's secured ticket is v0; the P2P buyer is v1. Without this filter,
+      // a reprocess (cursor reset by parseRpcLedgerRangeError on public RPC
+      // retention loss) re-cancels the buyer's ACTIVE v1 row and the ticket
+      // vanishes from "Mis Entradas".
       await prisma.tickets.updateMany({
-        where: { contract_address: contractId, ticket_root_id: rootId, status: 'ACTIVE' },
+        where: { contract_address: contractId, ticket_root_id: rootId, status: 'ACTIVE', version: { lt: 1 } },
         data: { status: 'CANCELLED', is_for_sale: false, lifecycle_reason: 'PRIMARY_P2P_REPLACED' },
       });
       if (!alreadyCreated) {

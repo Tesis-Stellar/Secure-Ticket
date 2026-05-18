@@ -1022,20 +1022,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         //    del collectible NFT solo si el backend puede verificar txHash/comprador/version.
         options?.onStatus?.("reconciling");
         setBalanceVersion((v) => v + 1);
-        await sleep(7000);
-        try {
-          await apiFetch("/api/transactions/transfer-nft", {
-            method: "POST",
-            body: JSON.stringify({
-              contractAddress,
-              ticketRootId,
-              buyerWallet: buyerPublicKey,
-              txHash: submitResult.txHash,
-              expectedVersion: currentVersion + 1,
-            }),
-          });
-        } catch (e: unknown) {
-          console.warn("[nft] verified transfer skipped:", getErrorMessage(e, "transfer failed"));
+        // El backend solo quema el NFT del vendedor + mintea el del comprador
+        // (burnAndMintResaleNft) una vez que el indexer proyecta la reventa.
+        // Hasta entonces devuelve 409. Un solo intento con espera fija casi
+        // nunca alcanza (indexer poolea cada 5s + latencia RPC) -> el burn no
+        // corre y el coleccionable se queda en la Freighter del vendedor.
+        // Reintentar mientras el backend responda 409 (indexer pendiente).
+        const transferDelaysMs = [3000, 3000, 3000, 4000, 5000];
+        for (let attempt = 0; attempt < transferDelaysMs.length; attempt++) {
+          await sleep(transferDelaysMs[attempt]);
+          try {
+            await apiFetch("/api/transactions/transfer-nft", {
+              method: "POST",
+              body: JSON.stringify({
+                contractAddress,
+                ticketRootId,
+                buyerWallet: buyerPublicKey,
+                txHash: submitResult.txHash,
+                expectedVersion: currentVersion + 1,
+              }),
+            });
+            break;
+          } catch (e: unknown) {
+            const pendingIndexer = e instanceof ApiRequestError && e.status === 409;
+            if (pendingIndexer && attempt < transferDelaysMs.length - 1) {
+              continue;
+            }
+            console.warn("[nft] verified transfer skipped:", getErrorMessage(e, "transfer failed"));
+            break;
+          }
         }
         const confirmed = await waitForTicketReconciliation(
           (tickets) =>

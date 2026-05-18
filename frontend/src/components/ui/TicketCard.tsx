@@ -354,28 +354,43 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
       {/* Real QR — once secured on-chain, this matches the QR baked into the
           Freighter Collectible (encodes contractAddress + ticketRootId). */}
       <div className="flex flex-col items-center justify-center sm:border-l sm:border-border sm:pl-4 min-w-[120px]">
-        <div className={`relative p-2 bg-white rounded-lg shadow-sm ${inactiveQrReason ? "opacity-35 grayscale" : ""}`}>
-          <QRCodeCanvas
-            value={
-              ticket.qrPayload ??
-              JSON.stringify({ ticketId: ticket.id, code: ticket.ticketCode || ticket.id })
-            }
-            size={80}
-            level={"H"}
-            bgColor={"#ffffff"}
-            fgColor={"#000000"}
-          />
-          {inactiveQrReason ? (
-            <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/75">
-              <span className="px-1.5 py-0.5 bg-red-600 text-white text-[9px] font-black rounded uppercase">
-                Inactivo
-              </span>
+        {isMinted ? (
+          <>
+            <div className={`relative p-2 bg-white rounded-lg shadow-sm ${inactiveQrReason ? "opacity-35 grayscale" : ""}`}>
+              <QRCodeCanvas
+                value={
+                  ticket.qrPayload ??
+                  JSON.stringify({ ticketId: ticket.id, code: ticket.ticketCode || ticket.id })
+                }
+                size={80}
+                level={"H"}
+                bgColor={"#ffffff"}
+                fgColor={"#000000"}
+              />
+              {inactiveQrReason ? (
+                <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/75">
+                  <span className="px-1.5 py-0.5 bg-red-600 text-white text-[9px] font-black rounded uppercase">
+                    Inactivo
+                  </span>
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-        <span className={`text-[10px] font-bold mt-2 uppercase tracking-tight ${inactiveQrReason ? "text-red-600" : "text-muted-foreground"}`}>
-          {inactiveQrReason ?? (isMinted ? "EN TU WALLET" : ticket.ticketCode?.slice(0, 10) || "QR-CODE")}
-        </span>
+            <span className={`text-[10px] font-bold mt-2 uppercase tracking-tight ${inactiveQrReason ? "text-red-600" : "text-muted-foreground"}`}>
+              {inactiveQrReason ?? "EN TU WALLET"}
+            </span>
+          </>
+        ) : (
+          <>
+            <div className="relative p-2 bg-white rounded-lg shadow-sm opacity-40">
+              <div className="w-20 h-20 flex items-center justify-center">
+                <Lock className="w-8 h-8 text-muted-foreground" />
+              </div>
+            </div>
+            <p className="text-[10px] font-medium mt-2 text-center text-muted-foreground max-w-[150px] leading-tight">
+              El QR de tu boleto se liberará minutos u horas antes del evento. Asegúralo en blockchain para obtenerlo ahora como NFT.
+            </p>
+          </>
+        )}
       </div>
     </div>
 

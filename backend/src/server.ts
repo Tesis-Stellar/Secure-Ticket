@@ -24,7 +24,7 @@ import { authorizeVerifiedNftTransfer } from './nftTransferPolicy';
 import { authorizeScannerRole, evaluateScanTicket, parseScanRequest } from './scannerPolicy';
 import { buildCheckinPayloadSummary, summarizeScanRequest, type CheckinResult } from './checkinPolicy';
 import { buildSimulatedOrderNumber, normalizeIdempotencyKey } from './checkoutPolicy';
-import { deriveChainEventId, parseSorobanU32ReturnValue } from './secureTicketPolicy';
+import { deriveChainEventId, getTicketEventAvailabilityError, parseSorobanU32ReturnValue } from './secureTicketPolicy';
 import { createWalletChallenge, verifyWalletChallengeSignature } from './walletChallengePolicy';
 import { signTicketQr } from './qrPolicy';
 import { authorizeTransactionIntentCurrentState, authorizeTransactionIntentSubmit, buildTransactionIntentExpiry } from './transactionIntentPolicy';
@@ -311,6 +311,16 @@ async function buildTicketQrPng(payload: object): Promise<Buffer> {
   });
 }
 
+async function buildInactiveTicketPng(reason: string): Promise<Buffer> {
+  return QRCode.toBuffer(JSON.stringify({ status: 'inactive', reason }), {
+    errorCorrectionLevel: 'M',
+    type: 'png',
+    width: 512,
+    margin: 2,
+    color: { dark: '#9ca3af', light: '#f3f4f6' },
+  });
+}
+
 function buildSignedTicketQrPayload(input: {
   contractAddress: string;
   ticketRootId: number;
@@ -527,14 +537,18 @@ function buildTicketResalePolicyResponse(context: NonNullable<Awaited<ReturnType
       policy: null,
     };
   }
+  const eventAvailabilityError = getTicketEventAvailabilityError({
+    status: context.event.status,
+    startsAt: context.event.starts_at,
+  });
   const evaluation = evaluateResalePolicy({
     policy: context.policy,
     originalPriceAmount: context.originalPriceAmount,
     requestedPriceAmount,
     eventStartsAt: context.event.starts_at,
   });
-  let canList = evaluation.ok;
-  let reason = evaluation.ok ? null : evaluation.error;
+  let canList = !eventAvailabilityError && evaluation.ok;
+  let reason = eventAvailabilityError ?? (evaluation.ok ? null : evaluation.error);
   if (context.ticket.status !== 'ACTIVE') {
     canList = false;
     reason = `El ticket no está activo: ${context.ticket.status}`;
@@ -1106,6 +1120,7 @@ function toEventDto(event: any) {
     venue: { name: event.venues?.name ?? '' },
     venueType: event.venues?.venue_type ?? null,
     startsAt: event.starts_at,
+    status: event.status,
     hasAssignedSeating: event.has_assigned_seating,
     minPrice: minPrice,
     isFeatured: false,
@@ -1542,13 +1557,31 @@ app.post('/api/transactions/secure-ticket', authMiddleware, async (req, res) => 
 
     const ticketType = ticket.order_items?.event_ticket_types ?? ticket.order_items?.event_seat_inventory?.event_ticket_types;
     const event = ticketType?.events;
+    const eventAvailabilityError = getTicketEventAvailabilityError({
+      status: event?.status,
+      startsAt: event?.starts_at,
+    });
+    if (eventAvailabilityError) {
+      sendApiError(req, res, 409, 'CONFLICT', `No se puede asegurar este ticket: ${eventAvailabilityError}`);
+      return;
+    }
+
     if (ticket.contract_address && ticket.nft_token_id == null && ticket.ticket_root_id != null && ticket.owner_wallet) {
       const eventForNft = event?.nft_contract_address
         ? event
         : await prisma.events.findFirst({
             where: { contract_address: ticket.contract_address },
-            select: { id: true, nft_contract_address: true },
+            select: { id: true, nft_contract_address: true, starts_at: true, status: true },
           });
+
+      const pendingNftEventAvailabilityError = getTicketEventAvailabilityError({
+        status: (eventForNft as any)?.status,
+        startsAt: eventForNft?.starts_at,
+      });
+      if (pendingNftEventAvailabilityError) {
+        sendApiError(req, res, 409, 'CONFLICT', `No se puede asegurar este ticket: ${pendingNftEventAvailabilityError}`);
+        return;
+      }
 
       if (!eventForNft?.nft_contract_address) {
         sendApiError(req, res, 400, 'BAD_REQUEST', 'Evento sin nft_contract_address (NFT no desplegado)');
@@ -1894,6 +1927,10 @@ app.post('/api/transactions/list-ticket', authMiddleware, async (req, res) => {
     const ticket = context?.ticket;
     if (!ticket) { sendApiError(req, res, 404, 'NOT_FOUND', 'Ticket no encontrado'); return; }
     if (ticket.owner_user_id !== (req as any).userId) { sendApiError(req, res, 403, 'FORBIDDEN', 'No autorizado'); return; }
+    const eventAvailabilityError = context.event
+      ? getTicketEventAvailabilityError({ status: context.event.status, startsAt: context.event.starts_at })
+      : 'No fue posible determinar el evento del ticket';
+    if (eventAvailabilityError) { sendApiError(req, res, 409, 'CONFLICT', `No se puede vender este ticket: ${eventAvailabilityError}`); return; }
     if (ticket.status !== 'ACTIVE') { sendApiError(req, res, 409, 'CONFLICT', `El ticket no está activo: ${ticket.status}`); return; }
     if (!ticket.contract_address || ticket.ticket_root_id === null) { sendApiError(req, res, 400, 'BAD_REQUEST', 'Ticket no registrado en blockchain'); return; }
     if (ticket.is_for_sale) { sendApiError(req, res, 409, 'CONFLICT', 'Ticket ya está en venta'); return; }
@@ -1968,9 +2005,14 @@ app.post('/api/transactions/cancel-listing', authMiddleware, async (req, res) =>
       return;
     }
 
-    const ticket = await prisma.tickets.findUnique({ where: { id: ticketId } });
+    const context = await getTicketResaleContext(String(ticketId));
+    const ticket = context?.ticket;
     if (!ticket) { sendApiError(req, res, 404, 'NOT_FOUND', 'Ticket no encontrado'); return; }
     if (ticket.owner_user_id !== (req as any).userId) { sendApiError(req, res, 403, 'FORBIDDEN', 'No autorizado'); return; }
+    const eventAvailabilityError = context.event
+      ? getTicketEventAvailabilityError({ status: context.event.status, startsAt: context.event.starts_at })
+      : 'No fue posible determinar el evento del ticket';
+    if (eventAvailabilityError) { sendApiError(req, res, 409, 'CONFLICT', `No se puede modificar la venta de este ticket: ${eventAvailabilityError}`); return; }
     if (!ticket.contract_address || ticket.ticket_root_id === null) { sendApiError(req, res, 400, 'BAD_REQUEST', 'Ticket no registrado en blockchain'); return; }
     if (!ticket.is_for_sale) { sendApiError(req, res, 409, 'CONFLICT', 'Ticket no está en venta'); return; }
     if (!ticket.owner_wallet || ticket.owner_wallet !== user.wallet_address) {
@@ -2353,7 +2395,7 @@ app.get('/api/nft/metadata/:nftContractAddress/:tokenId', async (req, res) => {
     const event = await cached(`nft:metadata:event:${nftContractAddress}`, 3_600_000, () =>
       prisma.events.findFirst({
         where: { nft_contract_address: nftContractAddress } as any,
-        select: { title: true, starts_at: true, contract_address: true, slug: true } as any,
+        select: { title: true, starts_at: true, contract_address: true, slug: true, status: true } as any,
       })
     );
     if (!event) {
@@ -2362,16 +2404,21 @@ app.get('/api/nft/metadata/:nftContractAddress/:tokenId', async (req, res) => {
     }
     const evAny = event as any;
     const startsAt = evAny.starts_at ? new Date(evAny.starts_at).toISOString().slice(0, 10) : '';
+    const inactiveReason = getTicketEventAvailabilityError({ status: evAny.status, startsAt: evAny.starts_at });
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.json({
-      name: `Boleto — ${evAny.title}`,
+      name: `${inactiveReason ? 'Boleto inactivo' : 'Boleto'} — ${evAny.title}`,
       description:
-        `Boleto NFT del evento "${evAny.title}"${startsAt ? ` (${startsAt})` : ''}. ` +
-        `Escanea el QR del coleccionable en puerta para validar tu acceso.`,
+        inactiveReason
+          ? `Boleto NFT del evento "${evAny.title}"${startsAt ? ` (${startsAt})` : ''}. Estado: ${inactiveReason}. Se conserva solo como trazabilidad.`
+          : `Boleto NFT del evento "${evAny.title}"${startsAt ? ` (${startsAt})` : ''}. ` +
+            `Escanea el QR del coleccionable en puerta para validar tu acceso.`,
       image: `${PUBLIC_BASE_URL}/api/nft/qr/${nftContractAddress}/${tokenId}.png`,
       attributes: [
         { trait_type: 'Evento', value: evAny.title },
         ...(startsAt ? [{ trait_type: 'Fecha', value: startsAt }] : []),
+        { trait_type: 'Estado', value: inactiveReason ? 'Inactivo' : 'Activo' },
+        ...(inactiveReason ? [{ trait_type: 'Motivo', value: inactiveReason }] : []),
         { trait_type: 'Contrato Evento', value: evAny.contract_address ?? '' },
         { trait_type: 'Token ID', value: Number(tokenId) },
       ],
@@ -2397,7 +2444,7 @@ app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
       const event = await cached(`nft:qr:event:${nftContractAddress}`, 3_600_000, () =>
         prisma.events.findFirst({
           where: { nft_contract_address: nftContractAddress } as any,
-          select: { id: true, contract_address: true } as any,
+          select: { id: true, contract_address: true, starts_at: true, status: true } as any,
         })
       );
       const eventContract = (event as any)?.contract_address as string | null | undefined;
@@ -2405,6 +2452,10 @@ app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
         sendApiError(req, res, 404, 'NOT_FOUND', 'NFT contract no encontrado');
         return;
       }
+      const inactiveReason = getTicketEventAvailabilityError({
+        status: (event as any)?.status,
+        startsAt: (event as any)?.starts_at,
+      });
       const ticket = await cached(`nft:qr:ticket:${eventContract}:${tokenId}`, 3_600_000, () =>
         prisma.tickets.findFirst({
           where: {
@@ -2418,13 +2469,15 @@ app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
         sendApiError(req, res, 404, 'NOT_FOUND', 'NFT token no encontrado');
         return;
       }
-      const buf = await buildTicketQrPng(buildSignedTicketQrPayload({
-        contractAddress: eventContract,
-        ticketRootId: (ticket as any).ticket_root_id,
-        version: (ticket as any).version,
-        eventId: (event as any).id,
-        ownerWallet: (ticket as any).owner_wallet ?? null,
-      }));
+      const buf = inactiveReason
+        ? await buildInactiveTicketPng(inactiveReason)
+        : await buildTicketQrPng(buildSignedTicketQrPayload({
+            contractAddress: eventContract,
+            ticketRootId: (ticket as any).ticket_root_id,
+            version: (ticket as any).version,
+            eventId: (event as any).id,
+            ownerWallet: (ticket as any).owner_wallet ?? null,
+          }));
       qrCache.set(cacheKey, buf);
     }
     res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
@@ -4095,6 +4148,7 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
       const seat = t.order_items?.event_seat_inventory?.seats;
       const acquiredViaResale = typeof t.version === 'number' && t.version > 0;
       const signedQrPayload = t.contract_address && t.ticket_root_id != null && t.version != null && evt?.id
+        && !getTicketEventAvailabilityError({ status: (evt as any)?.status, startsAt: (evt as any)?.starts_at })
         ? JSON.stringify(buildSignedTicketQrPayload({
             contractAddress: t.contract_address,
             ticketRootId: t.ticket_root_id,

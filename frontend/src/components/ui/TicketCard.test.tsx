@@ -134,4 +134,53 @@ describe("TicketCard resale UX", () => {
     });
     expect(screen.queryByText("Listar boleto en reventa")).not.toBeInTheDocument();
   });
+
+  it("does not show the secure action for tickets from past events", () => {
+    mockTicketContext();
+
+    render(
+      <TicketCard
+        ticket={
+          {
+            ...ticket,
+            isSecuredOnChain: false,
+            event: {
+              ...ticket.event,
+              startsAt: "2020-01-01T20:00:00.000Z",
+            },
+          } as any
+        }
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /Asegurar con Secure Ticket/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Evento finalizado")).toBeInTheDocument();
+    expect(screen.getByText("Inactivo")).toBeInTheDocument();
+  });
+
+  it("does not show resale actions for tickets from canceled events", () => {
+    mockTicketContext();
+
+    render(
+      <TicketCard
+        ticket={
+          {
+            ...ticket,
+            nftContractAddress: "C_NFT",
+            nftTokenId: 1,
+            event: {
+              ...ticket.event,
+              status: "CANCELLED",
+              startsAt: "2026-12-01T20:00:00.000Z",
+            },
+          } as any
+        }
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: "Vender boleta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ver NFT en Freighter" })).not.toBeInTheDocument();
+    expect(screen.getByText("Evento cancelado")).toBeInTheDocument();
+    expect(screen.getByText("Inactivo")).toBeInTheDocument();
+  });
 });

@@ -379,6 +379,22 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
               {inactiveQrReason ?? "EN TU WALLET"}
             </span>
           </>
+        ) : inactiveQrReason ? (
+          <>
+            <div className="relative p-2 bg-white rounded-lg shadow-sm opacity-35 grayscale">
+              <div className="w-20 h-20 flex items-center justify-center">
+                <Lock className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/75">
+                <span className="px-1.5 py-0.5 bg-red-600 text-white text-[9px] font-black rounded uppercase">
+                  Inactivo
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold mt-2 uppercase tracking-tight text-red-600">
+              {inactiveQrReason}
+            </span>
+          </>
         ) : (
           <>
             <div className="relative p-2 bg-white rounded-lg shadow-sm opacity-40">

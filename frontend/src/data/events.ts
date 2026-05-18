@@ -33,6 +33,8 @@ export interface EventData {
   price: string;
   liveTickets?: LiveTicket[];
   contractAddress?: string;
+  startsAt?: string;
+  status?: string;
 }
 
 export interface LiveTicket {

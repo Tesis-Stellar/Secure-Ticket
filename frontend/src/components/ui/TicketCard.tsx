@@ -55,12 +55,30 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
     confirmed: "Confirmado",
     failed: "Falló",
   };
+  const eventStartsAt = ticket.event.startsAt ? new Date(ticket.event.startsAt) : null;
+  const isPastEvent = Boolean(eventStartsAt && !Number.isNaN(eventStartsAt.getTime()) && eventStartsAt.getTime() <= Date.now());
+  const isEventActionable = !isPastEvent && (!ticket.event.status || ticket.event.status === "PUBLISHED");
+  const inactiveQrReason = isPastEvent
+    ? "Evento finalizado"
+    : ticket.event.status && ticket.event.status !== "PUBLISHED"
+      ? ticket.event.status === "CANCELLED"
+        ? "Evento cancelado"
+        : "Evento no disponible"
+      : null;
 
   const claimTicket = async () => {
     if (!walletAddress) {
       toast({
         title: "Conecta tu wallet",
         description: "Necesitas Freighter conectado desde el header antes de asegurar el boleto en blockchain.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!isEventActionable) {
+      toast({
+        title: inactiveQrReason ?? "Evento no disponible",
+        description: "No se pueden asegurar boletos de eventos finalizados, cancelados o no publicados.",
         variant: "destructive",
       });
       return;
@@ -227,7 +245,7 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
               <span className="inline-flex items-center gap-1 px-3 py-1 bg-success/10 text-success text-xs font-black rounded-lg border border-success/20">
                 <ShieldCheck className="w-4 h-4" /> Asegurado por Secure Ticket
               </span>
-              {isListed && (
+              {isListed && isEventActionable && (
                 <>
                   <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-500/10 text-blue-400 text-xs font-black rounded-lg border border-blue-500/20">
                     <Tag className="w-3.5 h-3.5" /> En Venta
@@ -277,7 +295,7 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
                   <ExternalLink className="w-3 h-3" /> Ver en Stellar Explorer
                 </a>
               )}
-              {ticket.nftContractAddress && ticket.nftTokenId != null && (
+              {ticket.nftContractAddress && ticket.nftTokenId != null && isEventActionable && (
                 <button
                   onClick={() => {
                     setJustMintedNftAddress(ticket.nftContractAddress ?? null);
@@ -289,7 +307,7 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
                   Ver NFT en Freighter
                 </button>
               )}
-              {ticket.nftContractAddress && ticket.nftTokenId == null && (
+              {ticket.nftContractAddress && ticket.nftTokenId == null && isEventActionable && (
                 <button
                   onClick={claimTicket}
                   disabled={isMinting}
@@ -301,7 +319,7 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
                 </button>
               )}
             </div>
-            {!isListed && (
+            {!isListed && isEventActionable && (
               <button
                 onClick={openResaleDialog}
                 disabled={isListing || isLoadingResalePolicy}
@@ -322,7 +340,7 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
               <p className="text-[11px] text-muted-foreground">{resaleStatusLabel[resaleFlowStatus]}</p>
             ) : null}
           </div>
-        ) : (
+        ) : isEventActionable ? (
           <button
             onClick={claimTicket}
             disabled={isMinting}
@@ -331,12 +349,12 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
             <Lock className="w-3.5 h-3.5" />
             {isMinting ? "Registrando en Secure Ticket..." : "Asegurar con Secure Ticket"}
           </button>
-        )}
+        ) : null}
       </div>
       {/* Real QR — once secured on-chain, this matches the QR baked into the
           Freighter Collectible (encodes contractAddress + ticketRootId). */}
       <div className="flex flex-col items-center justify-center sm:border-l sm:border-border sm:pl-4 min-w-[120px]">
-        <div className="p-2 bg-white rounded-lg shadow-sm">
+        <div className={`relative p-2 bg-white rounded-lg shadow-sm ${inactiveQrReason ? "opacity-35 grayscale" : ""}`}>
           <QRCodeCanvas
             value={
               ticket.qrPayload ??
@@ -347,9 +365,16 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
             bgColor={"#ffffff"}
             fgColor={"#000000"}
           />
+          {inactiveQrReason ? (
+            <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/75">
+              <span className="px-1.5 py-0.5 bg-red-600 text-white text-[9px] font-black rounded uppercase">
+                Inactivo
+              </span>
+            </div>
+          ) : null}
         </div>
-        <span className="text-[10px] text-muted-foreground font-bold mt-2 uppercase tracking-tight">
-          {isMinted ? "EN TU WALLET" : ticket.ticketCode?.slice(0, 10) || "QR-CODE"}
+        <span className={`text-[10px] font-bold mt-2 uppercase tracking-tight ${inactiveQrReason ? "text-red-600" : "text-muted-foreground"}`}>
+          {inactiveQrReason ?? (isMinted ? "EN TU WALLET" : ticket.ticketCode?.slice(0, 10) || "QR-CODE")}
         </span>
       </div>
     </div>

@@ -76,3 +76,27 @@ export function parseSorobanU32ReturnValue(value: unknown): number | null {
 
   return null;
 }
+
+export function isSecureTicketEventExpired(startsAt: Date | string | null | undefined, now = new Date()): boolean {
+  if (!startsAt) return false;
+  const eventStart = startsAt instanceof Date ? startsAt : new Date(startsAt);
+  if (Number.isNaN(eventStart.getTime())) return false;
+  return eventStart.getTime() <= now.getTime();
+}
+
+export function getTicketEventAvailabilityError(input: {
+  startsAt?: Date | string | null;
+  status?: string | null;
+}, now = new Date()): string | null {
+  if (input.status && input.status !== 'PUBLISHED') {
+    if (input.status === 'CANCELLED') return 'El evento fue cancelado';
+    if (input.status === 'COMPLETED') return 'El evento ya finalizó';
+    return `El evento no está disponible: ${input.status}`;
+  }
+
+  if (isSecureTicketEventExpired(input.startsAt, now)) {
+    return 'El evento ya pasó';
+  }
+
+  return null;
+}

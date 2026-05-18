@@ -139,8 +139,13 @@ async function applyIndexerProjection(
       ? await prisma.users.findUnique({ where: { wallet_address: newOwnerWallet } })
       : null;
 
+    // Order by version so the seller's original row (lowest version) is the
+    // one classified, not an arbitrary ACTIVE row. With a racing buyer row
+    // already projected, an unordered findFirst could pick it and misroute
+    // this into the in-place "normal primary" branch.
     const existing = await prisma.tickets.findFirst({
       where: { contract_address: contractId, ticket_root_id: rootId, status: 'ACTIVE' },
+      orderBy: { version: 'asc' },
       select: { id: true, is_for_sale: true, resale_price: true, order_item_id: true },
     });
 

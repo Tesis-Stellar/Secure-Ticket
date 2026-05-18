@@ -21,6 +21,8 @@ export interface PurchasedTicket {
   quantity: number;
   seats?: string[];
   purchasedAt: string;
+  status?: string;
+  usedAt?: string | null;
   // Web3 fields
   isSecuredOnChain?: boolean;
   isForSale?: boolean;
@@ -78,6 +80,8 @@ type TicketApiResponse = {
   id: string;
   ticketCode?: string;
   purchasedAt?: string;
+  status?: string;
+  usedAt?: string | null;
   quantity: number;
   seatIds?: string[];
   ticketType?: { id: string; name: string; price: number; serviceFee: number };
@@ -414,6 +418,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         quantity: ticket.quantity,
         seats: ticket.seatIds,
         purchasedAt: ticket.purchasedAt ?? new Date().toISOString(),
+        status: ticket.status,
+        usedAt: ticket.usedAt ?? null,
         isSecuredOnChain: ticket.isSecuredOnChain,
         isForSale: ticket.isForSale,
         contractAddress: ticket.contractAddress,

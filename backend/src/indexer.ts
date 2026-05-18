@@ -10,6 +10,10 @@ const prisma = new PrismaClient();
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const server = new rpc.Server(RPC_URL);
 const SLEEP_MS = 5000;
+// Public Soroban RPC retains ~7 days (~120k ledgers). A cursor older than this
+// points at events that are gone from the RPC forever, so crawling toward them
+// is pointless. Stay well inside the window.
+const MAX_LOOKBACK_LEDGERS = 90000;
 
 /** Public Soroban RPC only retains recent ledgers; cursor older than min causes getEvents to fail. */
 function parseRpcLedgerRangeError(message: string): { min: number; max: number } | null {
@@ -48,7 +52,23 @@ export async function runIndexer() {
       // 3. Fetch events from RPC
       const latestNetworkLedger = await server.getLatestLedger();
       const currentLedger = latestNetworkLedger.sequence;
-      const startLedger = state.last_ledger;
+      let startLedger = state.last_ledger;
+
+      // If the cursor fell outside the RPC retention window, those gap events
+      // are unrecoverable from a public RPC. Jump forward in one step instead
+      // of reactively crawling +1 per cycle toward a tip ~120k ledgers ahead
+      // (which never converges and floods logs).
+      const oldestServable = currentLedger - MAX_LOOKBACK_LEDGERS;
+      if (startLedger < oldestServable) {
+        console.warn(
+          `[INDEXER] Cursor last_ledger=${startLedger} fuera de la retención del RPC (tip=${currentLedger}). Salto a ${oldestServable}.`
+        );
+        startLedger = oldestServable;
+        await prisma.indexer_state.update({
+          where: { id: 1 },
+          data: { last_ledger: startLedger, updated_at: new Date() },
+        });
+      }
 
       if (startLedger >= currentLedger) {
         await sleep(SLEEP_MS);
@@ -74,12 +94,16 @@ export async function runIndexer() {
         const msg = String(rpcErr?.message ?? rpcErr ?? '');
         const range = parseRpcLedgerRangeError(msg);
         if (range && startLedger < range.min) {
+          // Snap above the floor with margin so the next getEvents (after the
+          // sleep, by which time the chain has produced more ledgers) is still
+          // inside the window and can do a real +1000 jump instead of looping.
+          const recovered = range.min + 50;
           console.warn(
-            `[INDEXER] Cursor last_ledger=${startLedger} está antes del histórico del RPC (${range.min}–${range.max}). Se ajusta a ${range.min}.`
+            `[INDEXER] Cursor last_ledger=${startLedger} está antes del histórico del RPC (${range.min}–${range.max}). Se ajusta a ${recovered}.`
           );
           await prisma.indexer_state.update({
             where: { id: 1 },
-            data: { last_ledger: range.min, updated_at: new Date() },
+            data: { last_ledger: recovered, updated_at: new Date() },
           });
           await sleep(SLEEP_MS);
           continue;

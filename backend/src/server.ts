@@ -4081,7 +4081,9 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
   try {
     const userId = (req as any).userId;
     const tickets = await prisma.tickets.findMany({
-      where: { owner_user_id: userId, status: 'ACTIVE' },
+      // USED tickets stay in history as redemption proof; CANCELLED (replaced
+      // by resale / invalidated) are excluded so the list is the user's wallet.
+      where: { owner_user_id: userId, status: { in: ['ACTIVE', 'USED'] } },
       include: {
         order_items: {
           include: {
@@ -4147,7 +4149,8 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
       const evt = tt?.events ?? (t.contract_address ? eventByContract.get(t.contract_address) : undefined);
       const seat = t.order_items?.event_seat_inventory?.seats;
       const acquiredViaResale = typeof t.version === 'number' && t.version > 0;
-      const signedQrPayload = t.contract_address && t.ticket_root_id != null && t.version != null && evt?.id
+      const signedQrPayload = t.status === 'ACTIVE'
+        && t.contract_address && t.ticket_root_id != null && t.version != null && evt?.id
         && !getTicketEventAvailabilityError({ status: (evt as any)?.status, startsAt: (evt as any)?.starts_at })
         ? JSON.stringify(buildSignedTicketQrPayload({
             contractAddress: t.contract_address,
@@ -4161,6 +4164,8 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
         id: t.id,
         ticketCode: t.ticket_code,
         purchasedAt: t.issued_at.toISOString(),
+        status: t.status,
+        usedAt: t.used_at ? t.used_at.toISOString() : null,
         quantity: 1,
         ticketType: tt ? {
           id: tt.id,

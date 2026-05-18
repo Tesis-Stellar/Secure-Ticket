@@ -55,16 +55,19 @@ export const TicketCard = ({ ticket }: { ticket: PurchasedTicket }) => {
     confirmed: "Confirmado",
     failed: "Falló",
   };
+  const isRedeemed = ticket.status === "USED";
   const eventStartsAt = ticket.event.startsAt ? new Date(ticket.event.startsAt) : null;
   const isPastEvent = Boolean(eventStartsAt && !Number.isNaN(eventStartsAt.getTime()) && eventStartsAt.getTime() <= Date.now());
-  const isEventActionable = !isPastEvent && (!ticket.event.status || ticket.event.status === "PUBLISHED");
-  const inactiveQrReason = isPastEvent
-    ? "Evento finalizado"
-    : ticket.event.status && ticket.event.status !== "PUBLISHED"
-      ? ticket.event.status === "CANCELLED"
-        ? "Evento cancelado"
-        : "Evento no disponible"
-      : null;
+  const isEventActionable = !isRedeemed && !isPastEvent && (!ticket.event.status || ticket.event.status === "PUBLISHED");
+  const inactiveQrReason = isRedeemed
+    ? "Boleto redimido"
+    : isPastEvent
+      ? "Evento finalizado"
+      : ticket.event.status && ticket.event.status !== "PUBLISHED"
+        ? ticket.event.status === "CANCELLED"
+          ? "Evento cancelado"
+          : "Evento no disponible"
+        : null;
 
   const claimTicket = async () => {
     if (!walletAddress) {

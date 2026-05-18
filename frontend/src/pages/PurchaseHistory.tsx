@@ -148,10 +148,14 @@ const PurchaseHistory = () => {
                         )}
                         <span
                           className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase mt-1 inline-block ${
-                            isP2p ? "bg-purple-100 text-purple-800" : "bg-success/10 text-success"
+                            ticket.status === "USED"
+                              ? "bg-muted text-muted-foreground"
+                              : isP2p
+                                ? "bg-purple-100 text-purple-800"
+                                : "bg-success/10 text-success"
                           }`}
                         >
-                          Confirmada
+                          {ticket.status === "USED" ? "Usado" : "Confirmada"}
                         </span>
                       </div>
                     </div>

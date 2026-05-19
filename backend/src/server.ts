@@ -2843,14 +2843,7 @@ app.post('/api/admin/events/:id/deploy', authMiddleware, async (req, res) => {
       where: { id: eventId },
       select: { id: true, contract_address: true },
     });
-    const soldTicketsCount = await prisma.tickets.count({
-      where: {
-        order_items: {
-          event_ticket_types: { event_id: eventId },
-        },
-      },
-    });
-    const deployDecision = authorizeSingleEventDeploy({ event, soldTicketsCount });
+    const deployDecision = authorizeSingleEventDeploy({ event });
     if (!deployDecision.ok) {
       sendApiError(req, res, deployDecision.status, codeForStatus(deployDecision.status), deployDecision.error);
       return;
@@ -2858,21 +2851,37 @@ app.post('/api/admin/events/:id/deploy', authMiddleware, async (req, res) => {
 
     // Run the Soroban deploy script for this event only. It must not clear or
     // redeploy contracts for other published events.
-    const { stdout, stderr } = await execPromise('npx tsx scripts/deploy-contracts.ts', {
-      cwd: require('path').resolve(__dirname, '..'),
-      env: { ...process.env, DEPLOY_EVENT_ID: eventId },
-    });
+    let stdout = '';
+    let stderr = '';
+    try {
+      const out = await execPromise('npx tsx scripts/deploy-contracts.ts', {
+        cwd: require('path').resolve(__dirname, '..'),
+        env: { ...process.env, DEPLOY_EVENT_ID: eventId },
+      });
+      stdout = out.stdout || '';
+      stderr = out.stderr || '';
+    } catch (scriptErr: any) {
+      // The deploy script crashed (missing .env.deploy/WASM, RPC, friendbot…).
+      // Surface its real output so the admin can act on it instead of a blank 500.
+      stdout = scriptErr?.stdout || '';
+      stderr = scriptErr?.stderr || String(scriptErr?.message ?? scriptErr ?? '');
+    }
     console.log(`[ADMIN] Deploy Output:\n${stdout}`);
     if (stderr) console.error(`[ADMIN] Deploy Stderr:\n${stderr}`);
 
     // Wait to let prisma updates settle
     await new Promise(r => setTimeout(r, 2000));
-    
+
     const updatedEvent = await prisma.events.findUnique({ where: { id: eventId } });
-    res.json({ 
-      success: !!updatedEvent?.contract_address, 
-      contractAddress: updatedEvent?.contract_address,
-      log: stdout || ''
+    if (!updatedEvent?.contract_address) {
+      const detail = (stderr || stdout || '').split('\n').filter(Boolean).slice(-3).join(' · ').slice(0, 400);
+      sendApiError(req, res, 502, 'INTERNAL_ERROR', `No se desplegó el contrato. ${detail || 'Revisa los logs del backend.'}`);
+      return;
+    }
+    res.json({
+      success: true,
+      contractAddress: updatedEvent.contract_address,
+      log: stdout,
     });
   } catch (error: any) {
     console.error('[ADMIN] Deploy event error:', error);
@@ -4137,7 +4146,9 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
   try {
     const userId = (req as any).userId;
     const tickets = await prisma.tickets.findMany({
-      where: { owner_user_id: userId, status: 'ACTIVE' },
+      // USED tickets stay in history as redemption proof; CANCELLED (replaced
+      // by resale / invalidated) are excluded so the list is the user's wallet.
+      where: { owner_user_id: userId, status: { in: ['ACTIVE', 'USED'] } },
       include: {
         order_items: {
           include: {
@@ -4206,7 +4217,8 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
       const evt = tt?.events ?? (t.contract_address ? eventByContract.get(t.contract_address) : undefined);
       const seat = t.order_items?.event_seat_inventory?.seats;
       const acquiredViaResale = typeof t.version === 'number' && t.version > 0;
-      const signedQrPayload = t.contract_address && t.ticket_root_id != null && t.version != null && evt?.id
+      const signedQrPayload = t.status === 'ACTIVE'
+        && t.contract_address && t.ticket_root_id != null && t.version != null && evt?.id
         && !getTicketEventAvailabilityError({ status: (evt as any)?.status, startsAt: (evt as any)?.starts_at })
         ? JSON.stringify(buildSignedTicketQrPayload({
             contractAddress: t.contract_address,
@@ -4220,6 +4232,8 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
         id: t.id,
         ticketCode: t.ticket_code,
         purchasedAt: t.issued_at.toISOString(),
+        status: t.status,
+        usedAt: t.used_at ? t.used_at.toISOString() : null,
         quantity: 1,
         ticketType: tt ? {
           id: tt.id,

@@ -192,18 +192,32 @@ async function main() {
   console.log('=== Soroban Contract Deployment to Testnet ===\n');
   const deployEventId = process.env.DEPLOY_EVENT_ID?.trim();
 
-  // 1. Load keys from .env.deploy (pre-configured wallets)
-  const envDeployPath = path.resolve(__dirname, '../.env.deploy');
-  const envDeployContent = fs.readFileSync(envDeployPath, 'utf-8');
+  // 1. Load keys. Locally we read backend/.env.deploy (gitignored). In prod
+  // (Railway/Render) that file does not exist, so fall back to process.env,
+  // where the same secrets are configured as deploy env vars.
   const envDeployVars: Record<string, string> = {};
-  for (const line of envDeployContent.split('\n')) {
-    const match = line.match(/^([A-Z0-9_]+)=(.+)$/);
-    if (match) envDeployVars[match[1]] = match[2].trim();
+  const envDeployPath = path.resolve(__dirname, '../.env.deploy');
+  if (fs.existsSync(envDeployPath)) {
+    const envDeployContent = fs.readFileSync(envDeployPath, 'utf-8');
+    for (const line of envDeployContent.split('\n')) {
+      const match = line.match(/^([A-Z0-9_]+)=(.+)$/);
+      if (match) envDeployVars[match[1]] = match[2].trim();
+    }
   }
 
-  const adminKeypair = Keypair.fromSecret(envDeployVars['ADMIN_SECRET']);
-  const platformKeypair = Keypair.fromSecret(envDeployVars['PLATFORM_SECRET']);
-  const organizerKeypair = Keypair.fromSecret(envDeployVars['ORGANIZER_SECRET']);
+  const readSecret = (name: string): string => {
+    const value = envDeployVars[name] || process.env[name];
+    if (!value) {
+      throw new Error(
+        `Falta ${name}. Define backend/.env.deploy localmente o la variable de entorno ${name} en el host de despliegue.`,
+      );
+    }
+    return value;
+  };
+
+  const adminKeypair = Keypair.fromSecret(readSecret('ADMIN_SECRET'));
+  const platformKeypair = Keypair.fromSecret(readSecret('PLATFORM_SECRET'));
+  const organizerKeypair = Keypair.fromSecret(readSecret('ORGANIZER_SECRET'));
 
   console.log('Keypairs loaded from .env.deploy:');
   console.log(`  Admin:     ${adminKeypair.publicKey()}`);
@@ -218,6 +232,9 @@ async function main() {
 
   // 3. Upload event_contract WASM
   const eventWasmPath = resolveWasmPath('event_contract', [
+    // Bundled inside backend/ so it ships with the deployed artifact (prod
+    // hosts only deploy backend/, and have no Rust toolchain to rebuild it).
+    path.resolve(__dirname, '../wasm/event_contract.wasm'),
     path.join(WASM_DIR, 'event_contract.wasm'),
     path.join(CONTRACTS_DIR, 'target/wasm32v1-none/release/event_contract.wasm'),
     path.join(CONTRACTS_DIR, 'target/wasm32-unknown-unknown/release/event_contract.optimized.wasm'),

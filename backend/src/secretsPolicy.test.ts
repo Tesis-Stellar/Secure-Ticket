@@ -6,7 +6,7 @@ import test from 'node:test';
 const repoRoot = join(__dirname, '../..');
 const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8');
 const backendEnvExample = readFileSync(join(repoRoot, 'backend/.env.example'), 'utf8');
-const custodyDoc = readFileSync(join(repoRoot, 'docs/operations/SECRETS_AND_CUSTODY.md'), 'utf8');
+const runtimeDeploymentDoc = readFileSync(join(repoRoot, 'docs/operations/RUNTIME_DEPLOYMENT.md'), 'utf8');
 
 test('gitignore blocks local env and deployment secret files', () => {
   assert.match(gitignore, /^\.env$/m);
@@ -23,8 +23,8 @@ test('env example documents secret placeholders without real Stellar secret keys
 });
 
 test('custody documentation declares ORGANIZER_SECRET as a custodial backend role', () => {
-  assert.match(custodyDoc, /ORGANIZER_SECRET/);
-  assert.match(custodyDoc, /rol custodial/i);
-  assert.match(custodyDoc, /nunca frontend/i);
-  assert.match(custodyDoc, /demo Web2\.5/);
+  assert.match(runtimeDeploymentDoc, /ORGANIZER_SECRET/);
+  assert.match(runtimeDeploymentDoc, /rol custodial/i);
+  assert.match(runtimeDeploymentDoc, /nunca frontend/i);
+  assert.match(runtimeDeploymentDoc, /demo Web2\.5/);
 });

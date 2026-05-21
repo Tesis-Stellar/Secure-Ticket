@@ -103,4 +103,5 @@ La documentacion final debe describir Secure Ticket como un prototipo Web2.5:
 - Soroban aporta contratos, eventos, versionado y validaciones Web3.
 - PostgreSQL/Supabase actua como proyeccion operativa/cache para UI, scanner y ordenes.
 - El backend conserva responsabilidades centralizadas controladas, incluido `ORGANIZER_SECRET`, declaradas como limitacion academica.
+- `ORGANIZER_SECRET` es un rol custodial del backend para la demo Web2.5; nunca frontend debe recibirlo, importarlo ni exponerlo.
 - El indexer requiere ejecucion long-lived; serverless se considera alternativa limitada, no el runtime principal.

@@ -197,12 +197,10 @@ Estas limitaciones están documentadas para diferenciar el prototipo académico 
 ## Documentación
 
 - `docs/architecture/ARCHITECTURE.md`
-- `docs/architecture/MODELO_DATOS.md`
 - `docs/architecture/CONTRACTS_TECHNICAL_REFERENCE.md`
 - `docs/operations/RUNTIME_DEPLOYMENT.md`
-- `docs/operations/ENVIRONMENTS.md`
-- `docs/operations/LOAD_TESTING.md`
 - `docs/operations/TESTING_LIMITATIONS.md`
+- `backend/README.md`
 - `contracts/README.md`
 
 ## Estado del proyecto

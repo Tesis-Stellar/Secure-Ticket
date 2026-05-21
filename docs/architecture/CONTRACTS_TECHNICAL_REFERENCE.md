@@ -2,12 +2,13 @@
 
 ## 1. Visión General
 
-Stellar Tickets utiliza dos contratos inteligentes escritos en Rust para Soroban (el motor de smart contracts de Stellar):
+Stellar Tickets utiliza tres contratos inteligentes escritos en Rust para Soroban (el motor de smart contracts de Stellar):
 
 1. **factory_contract** (Fábrica): Crea y registra contratos de evento.
 2. **event_contract** (Evento): Gestiona boletos dentro de un evento específico.
+3. **ticket_nft_contract** (NFT): Representa el coleccionable asociado a un boleto asegurado.
 
-Cada evento tiene su propio contrato independiente, desplegado programáticamente por la fábrica. Esto aísla los datos de cada evento y facilita la auditoría.
+Cada evento puede tener su propio contrato de boletos y su propio contrato NFT. Esto aísla los datos de cada evento y facilita la auditoría.
 
 ## 2. Conceptos Técnicos de Rust y Soroban
 
@@ -225,7 +226,22 @@ El `Env` es el contexto de ejecución que Soroban inyecta automáticamente en ca
 | `obtener_contrato_evento` | `id_evento` | `Address` | Dirección del contrato de ese evento |
 | `obtener_contador_eventos` | (ninguna) | `u32` | Total de eventos creados |
 
-## 5. Modelo de Datos: Boleto
+## 5. Ticket NFT Contract — API de Funciones
+
+| Función | Propósito | Auth |
+|---------|-----------|------|
+| `inicializar` | Configura nombre, símbolo y administrador del contrato NFT. | Admin |
+| `mint` | Mintea un NFT para una wallet y un `token_id`. | Admin |
+| `transfer` | Transfiere un NFT desde su dueño actual. | Dueño actual |
+| `admin_transfer` | Transfiere administrativamente un NFT, usado para reventa controlada. | Admin |
+| `burn` | Quema un NFT. | Dueño o admin |
+| `owner_of` | Consulta dueño de un token. | Lectura |
+| `token_uri` | Consulta metadata URI. | Lectura |
+| `balance_of` | Consulta balance de NFTs por dirección. | Lectura |
+
+En el backend, el mint y el burn/remint se tratan como operaciones Web3 de la demo. Si fallan por Testnet/RPC, el sistema conserva el ticket operativo en PostgreSQL y reporta la limitación de manera explícita.
+
+## 6. Modelo de Datos: Boleto
 
 ```
 Boleto {
@@ -243,7 +259,7 @@ Boleto {
 
 La clave primaria en el storage es `(ticket_root_id, version)`. La clave `VersionActual(ticket_root_id)` siempre apunta a la versión vigente.
 
-## 6. Tabla de Errores
+## 7. Tabla de Errores
 
 | Código | Nombre | Cuándo ocurre |
 |--------|--------|---------------|
@@ -264,7 +280,7 @@ La clave primaria en el storage es `(ticket_root_id, version)`. La clave `Versio
 | 15 | `VerificadorYaExiste` | La dirección ya es verificador |
 | 16 | `VerificadorNoEncontrado` | La dirección no es verificador |
 
-## 7. Eventos On-Chain
+## 8. Eventos On-Chain
 
 | Evento | Cuándo se emite | Topics (indexables) | Datos |
 |--------|----------------|---------------------|-------|
@@ -279,7 +295,7 @@ La clave primaria en el storage es `(ticket_root_id, version)`. La clave `Versio
 | `VerificadorRemovido` | Al remover verificador | `verificador` | — |
 | `EventoCreado` | Al crear evento (factory) | `id_evento` | organizador, contrato_evento, capacidad_total |
 
-## 8. Decisiones de Diseño
+## 9. Decisiones de Diseño
 
 ### ¿Por qué burn/remint en vez de solo cambiar el propietario?
 - **Trazabilidad**: Cada versión queda como registro inmutable en la blockchain.

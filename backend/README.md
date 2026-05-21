@@ -20,7 +20,7 @@ backend/
 │   ├── indexer.ts     # Sincronización Soroban -> PostgreSQL
 │   └── types.d.ts
 ├── prisma/            # schema.prisma, seed y migraciones
-├── scripts/           # Utilidades de despliegue, seed y mantenimiento
+├── scripts/           # Utilidades de despliegue, demo, reconciliación y Testnet
 ├── .env.example
 ├── package.json
 └── vercel.json        # Configuración heredada / alternativa
@@ -123,5 +123,5 @@ En el entorno principal, el backend corre como proceso Node de larga duración y
 ## Documentación del monorepo
 
 - Visión general: [README del repositorio](../README.md)
-- Contratos Soroban: [contracts/DOCUMENTACION_CONTRATOS.md](../contracts/DOCUMENTACION_CONTRATOS.md)
-- Datos y arquitectura: carpeta [docs/](../docs/)
+- Contratos Soroban: [docs/architecture/CONTRACTS_TECHNICAL_REFERENCE.md](../docs/architecture/CONTRACTS_TECHNICAL_REFERENCE.md)
+- Arquitectura runtime: [docs/architecture/ARCHITECTURE.md](../docs/architecture/ARCHITECTURE.md)

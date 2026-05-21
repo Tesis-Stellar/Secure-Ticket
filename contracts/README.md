@@ -5,6 +5,7 @@ Workspace Rust/Soroban del proyecto **Stellar Tickets**.
 Este directorio contiene la lógica on-chain del sistema, principalmente:
 - `event_contract`: contrato principal de boletos, compra, reventa y redención
 - `factory_contract`: contrato de registro y gestión de contratos de evento
+- `ticket_nft_contract`: contrato NFT para coleccionables asociados a boletos
 
 ## Propósito
 
@@ -12,7 +13,7 @@ La capa on-chain se encarga de las reglas que deben quedar verificables en Sorob
 
 - propiedad del boleto
 - compra y reventa
-- comisionesls
+- comisiones
 - redención / consumo del boleto
 - eventos mínimos para indexación
 
@@ -36,10 +37,17 @@ contracts/
 │   │   │   ├── lib.rs
 │   │   │   └── test.rs
 │   │   └── test_snapshots/
-│   └── factory_contract/
+│   ├── factory_contract/
+│   │   ├── Cargo.toml
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   └── test.rs
+│   │   └── test_snapshots/
+│   └── ticket_nft_contract/
 │       ├── Cargo.toml
 │       ├── src/
 │       │   ├── lib.rs
 │       │   └── test.rs
 │       └── test_snapshots/
 └── README.md
+```

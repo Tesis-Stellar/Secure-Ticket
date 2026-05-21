@@ -40,6 +40,7 @@ graph TD
         RPC[Stellar RPC Node]
         SC_Factory[Factory Smart Contract]
         SC_Event[Event Smart Contracts]
+        SC_NFT[Ticket NFT Contracts]
     end
 
     %% Flujos de interacción
@@ -55,6 +56,7 @@ graph TD
     API -->|Valida intencion y envia TX| RPC
     
     RPC --> SC_Event
+    RPC --> SC_NFT
     
     SC_Event -->|Emite eventos Soroban| RPC
     Indexer -->|Polling| RPC
@@ -81,6 +83,7 @@ Albergan la lógica crítica:
 - **Atómica**: Se asegura que al revender un boleto, el pago en USDC y el cambio de propiedad ocurran simultáneamente.
 - **Transparente**: El contrato cobra y transfiere la comisión de reventa al instante al organizador del evento original.
 - **Inmutable**: Destruye la versión anterior del boleto y genera una nueva (`burn/remint`), garantizando que los códigos QR antiguos queden totalmente invalidados.
+- **Coleccionable**: `ticket_nft_contract` mintea y quema NFTs asociados a boletos asegurados cuando el flujo Web3 lo permite.
 
 ### 5. Indexador (El Sincronizador)
 Un proceso en segundo plano en Node.js que pregunta intermitentemente al nodo RPC de Soroban: "Hay nuevos eventos?".

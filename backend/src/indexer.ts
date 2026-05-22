@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const server = new rpc.Server(RPC_URL);
 const SLEEP_MS = 5000;
+const CONTRACT_ID_PATTERN = /^C[A-Z2-7]{55}$/;
 // Public Soroban RPC retains ~7 days (~120k ledgers). A cursor older than this
 // points at events that are gone from the RPC forever, so crawling toward them
 // is pointless. Stay well inside the window.
@@ -42,7 +43,13 @@ export async function runIndexer() {
         select: { contract_address: true }
       });
 
-      const contractIds = activeEvents.map(e => e.contract_address as string);
+      const contractIds = activeEvents
+        .map(e => e.contract_address as string)
+        .filter((contractId) => CONTRACT_ID_PATTERN.test(contractId));
+      const skippedContracts = activeEvents.length - contractIds.length;
+      if (skippedContracts > 0) {
+        console.warn(`[INDEXER] Ignorando ${skippedContracts} contract_address invalidos en events.`);
+      }
 
       if (contractIds.length === 0) {
         await sleep(SLEEP_MS);

@@ -3365,7 +3365,13 @@ app.patch('/api/admin/claims/:id', authMiddleware, async (req, res) => {
 async function getOrCreateCart(userId: string) {
   let cart = await prisma.carts.findFirst({ where: { user_id: userId, status: 'ACTIVE' } });
   if (!cart) {
-    cart = await prisma.carts.create({ data: { user_id: userId, status: 'ACTIVE' } });
+    try {
+      cart = await prisma.carts.create({ data: { user_id: userId, status: 'ACTIVE' } });
+    } catch (error: any) {
+      if (error?.code !== 'P2002') throw error;
+      cart = await prisma.carts.findFirst({ where: { user_id: userId, status: 'ACTIVE' } });
+      if (!cart) throw error;
+    }
   }
   return cart;
 }
@@ -4340,9 +4346,10 @@ app.get('/api/tickets/sold', authMiddleware, async (req, res) => {
 });
 
 const isServerless = Boolean(process.env.VERCEL);
+const runIndexerEnv = process.env.RUN_INDEXER?.trim().toLowerCase();
 const shouldRunIndexer =
-  process.env.RUN_INDEXER === 'true' ||
-  (process.env.RUN_INDEXER !== 'false' && isProduction);
+  runIndexerEnv === 'true' ||
+  (runIndexerEnv !== 'false' && isProduction);
 
 // START THE SERVER (local/self-hosted mode)
 if (!isServerless) {

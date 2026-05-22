@@ -417,7 +417,7 @@ function getTheaterDepth(name: string, index: number): number {
 
 function ConcertStage() {
   return (
-    <div className="relative flex items-center justify-center">
+    <div className="pointer-events-none relative flex items-center justify-center">
       <div className="relative z-10 h-28 w-80 rounded-lg border-2 border-slate-700 bg-white shadow-sm flex items-center justify-center">
         <span className="text-2xl font-black uppercase tracking-tight text-slate-700">Stage</span>
       </div>
@@ -428,7 +428,7 @@ function ConcertStage() {
 
 function ConcertAisle({ className = "" }: { className?: string }) {
   return (
-    <div className={`absolute h-24 w-40 rounded-sm border-2 border-dashed border-slate-500 bg-slate-200/70 ${className}`} />
+    <div className={`pointer-events-none absolute h-24 w-40 rounded-sm border-2 border-dashed border-slate-500 bg-slate-200/70 ${className}`} />
   );
 }
 
@@ -453,7 +453,7 @@ function ConcertBlock({ section, rows, pi, className, orientation = "horizontal"
 
   if (orientation === "vertical") {
     return (
-      <div className={`absolute flex items-center gap-2 ${className}`}>
+      <div className={`pointer-events-auto absolute flex items-center gap-2 ${className}`}>
         {labelSide === "left" ? badge : null}
         <div className="flex gap-[7px]">
           {visibleRows.map((row) => (
@@ -480,7 +480,7 @@ function ConcertBlock({ section, rows, pi, className, orientation = "horizontal"
   }
 
   return (
-    <div className={`absolute flex flex-col items-center gap-2 ${className}`}>
+    <div className={`pointer-events-auto absolute flex flex-col items-center gap-2 ${className}`}>
       {labelSide === "top" ? badge : null}
       <div className="space-y-[6px]">
         {visibleRows.map((row) => (
@@ -776,7 +776,7 @@ function ConcertArenaLayout({ sections, selectedSeats, onToggleSeat, maxSeats, z
               return (
                 <div
                   key={group.section.id}
-                  className="absolute inset-0"
+                  className="pointer-events-none absolute inset-0"
                   style={{ transform: `translate(${cfg.dx * index}px, ${cfg.dy * index}px)` }}
                 >
                   <ConcertBlock

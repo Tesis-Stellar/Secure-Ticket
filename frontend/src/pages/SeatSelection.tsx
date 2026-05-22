@@ -86,9 +86,16 @@ const SeatSelection = () => {
   };
 
   const total = selectedSeats.reduce((s, seat) => s + seat.price + seat.serviceFee, 0);
+  const isSeatStillReservable = (seatId: string) =>
+    (seatsResponse?.sections ?? []).some((section) =>
+      Boolean(section.ticketTypeId) &&
+      section.seats.some((seat) => seat.seatId === seatId && seat.status === "AVAILABLE")
+    );
+  const hasUnavailableSelectedSeats = selectedSeats.some((seat) => !isSeatStillReservable(seat.id));
+  const canAddSelectedSeats = selectedSeats.length > 0 && !hasUnavailableSelectedSeats;
 
   const handleAdd = async () => {
-    if (selectedSeats.length === 0 || !event) return;
+    if (!canAddSelectedSeats || !event) return;
     if (!isLoggedIn) {
       navigate("/login", {
         state: {
@@ -312,13 +319,18 @@ const SeatSelection = () => {
                   ) : (
                     <button
                       onClick={handleAdd}
-                      disabled={addingToCart}
-                      className="w-full py-3 bg-accent hover:bg-accent/90 disabled:opacity-60 text-accent-foreground font-black rounded-lg flex items-center justify-center gap-2 transition-colors text-sm"
+                      disabled={addingToCart || !canAddSelectedSeats}
+                      className="w-full py-3 bg-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60 text-accent-foreground font-black rounded-lg flex items-center justify-center gap-2 transition-colors text-sm"
                     >
                       {addingToCart ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
                       {addingToCart ? "Agregando..." : "Agregar al Carrito"}
                     </button>
                   )}
+                  {hasUnavailableSelectedSeats ? (
+                    <p className="text-center text-xs font-bold text-destructive">
+                      Uno o más asientos seleccionados ya no están disponibles.
+                    </p>
+                  ) : null}
                 </>
               )}
             </div>

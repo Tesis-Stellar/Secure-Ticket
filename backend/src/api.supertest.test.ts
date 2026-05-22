@@ -338,6 +338,38 @@ test('POST /api/cart/items returns 404 for unknown ticket type', async () => {
   assert.ok(res.body.requestId);
 });
 
+test('POST /api/cart/items tolerates concurrent adds to a new active cart', async () => {
+  const customer = await createCustomerFixture('CartRace');
+  const { event, ticketType } = await createGeneralAdmissionEventFixture('CartRace', { price: 1200, serviceFee: 120 });
+  const secondTicketType = await prisma.event_ticket_types.create({
+    data: {
+      event_id: event.id,
+      ticket_type_name: 'General CartRace VIP',
+      price_amount: 2000,
+      service_fee_amount: 200,
+      inventory_quantity: 50,
+      max_per_order: 6,
+      is_active: true,
+    },
+  });
+  const token = tokenFor(customer.id);
+
+  const responses = await Promise.all([
+    request(app)
+      .post('/api/cart/items')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ticketTypeId: ticketType.id, quantity: 1 }),
+    request(app)
+      .post('/api/cart/items')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ ticketTypeId: secondTicketType.id, quantity: 1 }),
+  ]);
+
+  assert.deepEqual(responses.map((res) => res.status).sort(), [200, 200]);
+  const activeCarts = await prisma.carts.count({ where: { user_id: customer.id, status: 'ACTIVE' } });
+  assert.equal(activeCarts, 1);
+});
+
 test('POST /api/checkout/preview rejects an empty cart', async () => {
   const customerId = await testUserId('ci-supertest-customer@stellar-tickets.local');
   const res = await request(app)

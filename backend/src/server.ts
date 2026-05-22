@@ -4346,9 +4346,10 @@ app.get('/api/tickets/sold', authMiddleware, async (req, res) => {
 });
 
 const isServerless = Boolean(process.env.VERCEL);
+const runIndexerEnv = process.env.RUN_INDEXER?.trim().toLowerCase();
 const shouldRunIndexer =
-  process.env.RUN_INDEXER === 'true' ||
-  (process.env.RUN_INDEXER !== 'false' && isProduction);
+  runIndexerEnv === 'true' ||
+  (runIndexerEnv !== 'false' && isProduction);
 
 // START THE SERVER (local/self-hosted mode)
 if (!isServerless) {

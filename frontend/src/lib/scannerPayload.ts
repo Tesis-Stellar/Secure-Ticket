@@ -9,7 +9,24 @@ export type ParsedScannerPayload = {
 };
 
 export function parseScannerPayload(rawValue: string): ParsedScannerPayload {
-  const payload = JSON.parse(rawValue);
+  const trimmed = rawValue.trim();
+
+  // Defensa contra screenshots del collectible en Freighter: el PNG del NFT
+  // encodea un deeplink al dapp (no un qrToken firmado). Si el scanner ve una
+  // URL, el dueño legítimo debe abrir Stellar Tickets para obtener el QR
+  // rotativo de 60s.
+  if (/^https?:\/\//i.test(trimmed)) {
+    throw new Error(
+      "Este QR es solo para abrir el boleto en la app. Pídele al asistente que muestre el QR de acceso desde Stellar Tickets."
+    );
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch {
+    throw new Error("QR no reconocido");
+  }
 
   if (payload.qrToken) {
     return {

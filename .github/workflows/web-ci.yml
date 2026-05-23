@@ -32,6 +32,7 @@ jobs:
       RUN_INDEXER: "false"
       JWT_SECRET: "stellar-tickets-ci-secret-change-in-prod"
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/stellar_ci"
+      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/stellar_ci"
     steps:
       - uses: actions/checkout@v4
 

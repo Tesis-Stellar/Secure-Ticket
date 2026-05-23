@@ -1017,7 +1017,7 @@ app.get('/.well-known/stellar.toml', async (_req, res) => {
         : '';
       const desc =
         `Boleto NFT — ${eventTitle}${startsAt ? ` (${startsAt})` : ''}. ` +
-        `Escanea el QR en puerta para validar.`;
+        `Escanea el QR del coleccionable para abrir tu boleto en Stellar Tickets y obtener el QR de acceso.`;
       lines.push('[[CURRENCIES]]');
       lines.push(`code="${t.asset_code}"`);
       lines.push(`issuer="${issuer}"`);
@@ -1027,7 +1027,9 @@ app.get('/.well-known/stellar.toml', async (_req, res) => {
       lines.push('max_number=1');
       lines.push(`name="${eventTitle}"`);
       lines.push(`desc="${desc.replace(/"/g, '\\"')}"`);
-      lines.push(`image="${PUBLIC_BASE_URL}/api/tickets/qr/${t.asset_code}.png"`);
+      // v=2 cache-buster: el PNG migró de QR firmado (24h TTL, vulnerable a
+      // screenshot) a deeplink al dapp. Forzar refetch en Freighter.
+      lines.push(`image="${PUBLIC_BASE_URL}/api/tickets/qr/${t.asset_code}.png?v=2"`);
       lines.push('');
     }
     res.setHeader('Cache-Control', 'public, max-age=60');
@@ -2468,8 +2470,8 @@ app.get('/api/nft/metadata/:nftContractAddress/:tokenId', async (req, res) => {
         inactiveReason
           ? `Boleto NFT del evento "${evAny.title}"${startsAt ? ` (${startsAt})` : ''}. Estado: ${inactiveReason}. Se conserva solo como trazabilidad.`
           : `Boleto NFT del evento "${evAny.title}"${startsAt ? ` (${startsAt})` : ''}. ` +
-            `Escanea el QR del coleccionable en puerta para validar tu acceso.`,
-      image: `${PUBLIC_BASE_URL}/api/nft/qr/${nftContractAddress}/${tokenId}.png`,
+            `Escanea el QR del coleccionable para abrir tu boleto en Stellar Tickets y obtener el QR de acceso.`,
+      image: `${PUBLIC_BASE_URL}/api/nft/qr/${nftContractAddress}/${tokenId}.png?v=2`,
       attributes: [
         { trait_type: 'Evento', value: evAny.title },
         ...(startsAt ? [{ trait_type: 'Fecha', value: startsAt }] : []),

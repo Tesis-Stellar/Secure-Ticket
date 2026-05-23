@@ -26,7 +26,7 @@ import { buildCheckinPayloadSummary, summarizeScanRequest, type CheckinResult } 
 import { buildSimulatedOrderNumber, normalizeIdempotencyKey } from './checkoutPolicy';
 import { deriveChainEventId, getTicketEventAvailabilityError, parseSorobanU32ReturnValue } from './secureTicketPolicy';
 import { createWalletChallenge, verifyWalletChallengeSignature } from './walletChallengePolicy';
-import { signTicketQr } from './qrPolicy';
+import { signTicketQr, QR_TOKEN_TTL_ROLLING_SECONDS } from './qrPolicy';
 import { authorizeTransactionIntentCurrentState, authorizeTransactionIntentSubmit, buildTransactionIntentExpiry } from './transactionIntentPolicy';
 import { authorizeSingleEventDeploy } from './deployEventPolicy';
 import { codeForStatus, requestIdMiddleware, sendApiError } from './apiError';
@@ -312,6 +312,20 @@ async function buildTicketQrPng(payload: object): Promise<Buffer> {
   });
 }
 
+// QR del collectible en Freighter: encodea un deeplink al dapp en vez de un
+// token firmado. Defiende contra screenshots de la wallet — el scanner solo
+// acepta qrToken firmado, así que escanear la URL falla; el dueño legítimo
+// sigue el deeplink y obtiene el QR rotativo (60s TTL) dentro del dapp.
+async function buildTicketDeeplinkPng(url: string): Promise<Buffer> {
+  return QRCode.toBuffer(url, {
+    errorCorrectionLevel: 'M',
+    type: 'png',
+    width: 512,
+    margin: 2,
+    color: { dark: '#000000', light: '#FFFFFF' },
+  });
+}
+
 async function buildInactiveTicketPng(reason: string): Promise<Buffer> {
   return QRCode.toBuffer(JSON.stringify({ status: 'inactive', reason }), {
     errorCorrectionLevel: 'M',
@@ -328,6 +342,7 @@ function buildSignedTicketQrPayload(input: {
   version: number;
   eventId: string;
   ownerWallet?: string | null;
+  ttlSeconds?: number;
 }): { qrToken: string } {
   return {
     qrToken: signTicketQr({
@@ -337,6 +352,7 @@ function buildSignedTicketQrPayload(input: {
       version: input.version,
       eventId: input.eventId,
       ownerWallet: input.ownerWallet,
+      ttlSeconds: input.ttlSeconds,
     }),
   };
 }
@@ -914,8 +930,9 @@ async function burnAndMintResaleNft(input: {
 }
 
 // GET /api/tickets/qr/:assetCode.png — public PNG referenced by stellar.toml.
-// QR encodes a signed token bound to contract, root, version, event and owner,
-// so stale or transferred ticket images are rejected by the scanner.
+// QR encodea un deeplink al dapp (no un token firmado). Un screenshot del
+// collectible en Freighter es inservible en puerta: el scanner exige qrToken
+// firmado. El dueño abre el deeplink y obtiene el QR rotativo de 60s TTL.
 app.get('/api/tickets/qr/:assetCode.png', async (req, res) => {
   try {
     const assetCode = req.params.assetCode.replace(/\.png$/i, '');
@@ -926,61 +943,21 @@ app.get('/api/tickets/qr/:assetCode.png', async (req, res) => {
 
     const ticket = await prisma.tickets.findFirst({
       where: { asset_code: assetCode, contract_address: { not: null } },
-      select: {
-        contract_address: true,
-        ticket_root_id: true,
-        owner_wallet: true,
-        order_items: {
-          select: {
-            event_ticket_types: {
-              select: { event_id: true },
-            },
-          },
-        },
-      } as any,
+      select: { contract_address: true, ticket_root_id: true } as any,
     });
     if (!ticket?.contract_address || (ticket as any).ticket_root_id == null) {
       res.status(404).type('text/plain').send('Ticket not found');
       return;
     }
-    let eventId = (ticket as any).order_items?.event_ticket_types?.event_id as string | undefined;
-    if (!eventId) {
-      const event = await prisma.events.findFirst({
-        where: { contract_address: ticket.contract_address } as any,
-        select: { id: true } as any,
-      });
-      eventId = (event as any)?.id;
-    }
-    if (!eventId) {
-      res.status(404).type('text/plain').send('Event not found');
-      return;
-    }
-    const live = await prisma.tickets.findFirst({
-      where: {
-        contract_address: String(ticket.contract_address),
-        ticket_root_id: (ticket as any).ticket_root_id,
-        status: 'ACTIVE',
-      },
-      orderBy: { version: 'desc' },
-      select: { version: true, owner_wallet: true } as any,
-    });
-    const version = (live as any)?.version ?? 1;
-    const ownerWallet = (live as any)?.owner_wallet ?? (ticket as any).owner_wallet ?? null;
-    const cacheKey = `${assetCode}:v${version}:w${ownerWallet ?? '-'}`;
 
+    const cacheKey = `deeplink:${assetCode}`;
     if (!qrCache.has(cacheKey)) {
-      const buf = await buildTicketQrPng(buildSignedTicketQrPayload({
-        contractAddress: String(ticket.contract_address),
-        ticketRootId: (ticket as any).ticket_root_id,
-        version,
-        eventId,
-        ownerWallet,
-      }));
-      qrCache.set(cacheKey, buf);
+      const deeplink = `${PUBLIC_BASE_URL}/mi-cuenta/entradas?asset=${encodeURIComponent(assetCode)}`;
+      qrCache.set(cacheKey, await buildTicketDeeplinkPng(deeplink));
     }
 
     const png = qrCache.get(cacheKey)!;
-    res.setHeader('Cache-Control', 'public, max-age=60, must-revalidate');
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
     res.setHeader('Content-Type', 'image/png');
     res.send(png);
   } catch (err: any) {
@@ -2509,7 +2486,9 @@ app.get('/api/nft/metadata/:nftContractAddress/:tokenId', async (req, res) => {
 });
 
 // GET /api/nft/qr/:contractAddress/:tokenId.png — PNG estático por nft_token_id.
-// El QR queda ligado al snapshot de versión y owner_wallet que recibió ese NFT.
+// QR encodea un deeplink al dapp (no un token firmado). Defensa contra
+// screenshots del collectible en Freighter: el scanner solo valida qrTokens
+// firmados, y el dapp re-emite el QR rotativo de 60s TTL al dueño legítimo.
 app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
   try {
     const { nftContractAddress, tokenIdRaw } = req.params;
@@ -2518,7 +2497,7 @@ app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
       sendApiError(req, res, 400, 'BAD_REQUEST', 'tokenId invalido');
       return;
     }
-    const cacheKey = `nft:${nftContractAddress}:${tokenId}`;
+    const cacheKey = `nft:deeplink:${nftContractAddress}:${tokenId}`;
     if (!qrCache.has(cacheKey)) {
       const event = await cached(`nft:qr:event:${nftContractAddress}`, 3_600_000, () =>
         prisma.events.findFirst({
@@ -2541,22 +2520,19 @@ app.get('/api/nft/qr/:nftContractAddress/:tokenIdRaw', async (req, res) => {
             contract_address: eventContract,
             nft_token_id: tokenId,
           } as any,
-          select: { ticket_root_id: true, version: true, owner_wallet: true } as any,
+          select: { ticket_root_id: true } as any,
         })
       );
-      if (!ticket || (ticket as any).ticket_root_id == null || (ticket as any).version == null) {
+      if (!ticket || (ticket as any).ticket_root_id == null) {
         sendApiError(req, res, 404, 'NOT_FOUND', 'NFT token no encontrado');
         return;
       }
+      const deeplink =
+        `${PUBLIC_BASE_URL}/mi-cuenta/entradas` +
+        `?nft=${encodeURIComponent(nftContractAddress)}&tokenId=${tokenId}`;
       const buf = inactiveReason
         ? await buildInactiveTicketPng(inactiveReason)
-        : await buildTicketQrPng(buildSignedTicketQrPayload({
-            contractAddress: eventContract,
-            ticketRootId: (ticket as any).ticket_root_id,
-            version: (ticket as any).version,
-            eventId: (event as any).id,
-            ownerWallet: (ticket as any).owner_wallet ?? null,
-          }));
+        : await buildTicketDeeplinkPng(deeplink);
       qrCache.set(cacheKey, buf);
     }
     res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
@@ -4290,6 +4266,7 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
             version: t.version,
             eventId: evt.id,
             ownerWallet: t.owner_wallet ?? null,
+            ttlSeconds: QR_TOKEN_TTL_ROLLING_SECONDS,
           }))
         : t.qr_payload;
       return {
@@ -4327,6 +4304,80 @@ app.get('/api/tickets', authMiddleware, async (req, res) => {
   } catch (error: any) {
     console.error('[TICKETS] GET error:', error);
     sendApiError(req, res, 500, 'INTERNAL_ERROR', 'Error obteniendo tickets');
+  }
+});
+
+// GET /api/tickets/:id/qr — fresh short-lived QR token for rolling-refresh on
+// the client. Rotating the token every ~25s makes a stolen screenshot useless
+// at the door within a minute.
+app.get('/api/tickets/:id/qr', authMiddleware, async (req, res) => {
+  try {
+    const userId = (req as any).userId;
+    const ticket = await prisma.tickets.findFirst({
+      where: { id: String(req.params.id), owner_user_id: userId },
+      select: {
+        status: true,
+        contract_address: true,
+        ticket_root_id: true,
+        version: true,
+        owner_wallet: true,
+        order_items: {
+          select: {
+            event_ticket_types: { select: { events: { select: { id: true, status: true, starts_at: true, contract_address: true } } } },
+            event_seat_inventory: { select: { event_ticket_types: { select: { events: { select: { id: true, status: true, starts_at: true, contract_address: true } } } } } },
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      sendApiError(req, res, 404, 'NOT_FOUND', 'Boleto no encontrado');
+      return;
+    }
+    if (ticket.status !== 'ACTIVE') {
+      sendApiError(req, res, 409, 'TICKET_NOT_ACTIVE', 'Boleto no disponible para escaneo');
+      return;
+    }
+    if (!ticket.contract_address || ticket.ticket_root_id == null || ticket.version == null) {
+      sendApiError(req, res, 409, 'TICKET_NOT_SECURED', 'Boleto aún no asegurado on-chain');
+      return;
+    }
+
+    let evt = ticket.order_items?.event_ticket_types?.events
+      ?? ticket.order_items?.event_seat_inventory?.event_ticket_types?.events
+      ?? null;
+    if (!evt) {
+      evt = await prisma.events.findFirst({
+        where: { contract_address: ticket.contract_address },
+        select: { id: true, status: true, starts_at: true, contract_address: true },
+      });
+    }
+    if (!evt?.id) {
+      sendApiError(req, res, 409, 'EVENT_NOT_FOUND', 'Evento no encontrado');
+      return;
+    }
+    const availabilityError = getTicketEventAvailabilityError({ status: evt.status, startsAt: evt.starts_at });
+    if (availabilityError) {
+      sendApiError(req, res, 409, 'EVENT_NOT_ACTIONABLE', availabilityError);
+      return;
+    }
+
+    const payload = buildSignedTicketQrPayload({
+      contractAddress: ticket.contract_address,
+      ticketRootId: ticket.ticket_root_id,
+      version: ticket.version,
+      eventId: evt.id,
+      ownerWallet: ticket.owner_wallet ?? null,
+      ttlSeconds: QR_TOKEN_TTL_ROLLING_SECONDS,
+    });
+
+    res.json({
+      qrPayload: JSON.stringify(payload),
+      expiresInSeconds: QR_TOKEN_TTL_ROLLING_SECONDS,
+    });
+  } catch (error: any) {
+    console.error('[TICKETS] GET /:id/qr error:', error);
+    sendApiError(req, res, 500, 'INTERNAL_ERROR', 'Error refrescando QR');
   }
 });
 

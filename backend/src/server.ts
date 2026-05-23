@@ -1179,6 +1179,61 @@ async function getTicketTypeAvailability(eventId: string, ticketType: any, hasAs
   return Math.max(0, inventory - Number(sold._sum.quantity ?? 0));
 }
 
+// Batched availability for many ticket types — avoids N+1 / connection pool exhaustion.
+async function getAvailabilityMap(
+  eventId: string,
+  types: any[],
+  hasAssignedSeating: boolean,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!types.length) return map;
+
+  const seatedIds: string[] = [];
+  const generalTypes: any[] = [];
+  for (const t of types) {
+    if (hasAssignedSeating || t.venue_section_id) seatedIds.push(t.id);
+    else generalTypes.push(t);
+  }
+
+  if (seatedIds.length) {
+    const rows = await prisma.event_seat_inventory.groupBy({
+      by: ['event_ticket_type_id'],
+      where: {
+        event_id: eventId,
+        event_ticket_type_id: { in: seatedIds },
+        status: 'AVAILABLE',
+      },
+      _count: { _all: true },
+    });
+    for (const r of rows) {
+      if (r.event_ticket_type_id) map.set(r.event_ticket_type_id, r._count._all);
+    }
+    for (const id of seatedIds) if (!map.has(id)) map.set(id, 0);
+  }
+
+  if (generalTypes.length) {
+    const ids = generalTypes.map(t => t.id);
+    const sold = await prisma.order_items.groupBy({
+      by: ['event_ticket_type_id'],
+      where: {
+        event_ticket_type_id: { in: ids },
+        orders: { status: 'PAID' },
+      },
+      _sum: { quantity: true },
+    });
+    const soldMap = new Map<string, number>();
+    for (const s of sold) {
+      if (s.event_ticket_type_id) soldMap.set(s.event_ticket_type_id, Number(s._sum.quantity ?? 0));
+    }
+    for (const t of generalTypes) {
+      const inv = Number(t.inventory_quantity ?? 0);
+      map.set(t.id, Math.max(0, inv - (soldMap.get(t.id) ?? 0)));
+    }
+  }
+
+  return map;
+}
+
 const EVENT_LIST_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function normalizeEventSearchText(value: unknown): string {
@@ -1315,18 +1370,19 @@ app.get('/api/events/:slug', async (req, res) => {
     }
 
     // Include ticket types in detail response to avoid extra API call
-    const ticketTypes = await Promise.all((event.event_ticket_types ?? []).map(async (t: any) => ({
+    const availabilityMap = await cached(
+      `event:${event.id}:availability-map`,
+      10_000,
+      () => getAvailabilityMap(event.id, event.event_ticket_types ?? [], Boolean(event.has_assigned_seating)),
+    );
+    const ticketTypes = (event.event_ticket_types ?? []).map((t: any) => ({
       id: t.id,
       name: t.ticket_type_name,
       price: Number(t.price_amount),
       serviceFee: Number(t.service_fee_amount),
-      availability: await cached(
-        `event:${event.id}:ticket-type:${t.id}:availability`,
-        10_000,
-        () => getTicketTypeAvailability(event.id, t, Boolean(event.has_assigned_seating))
-      ),
+      availability: availabilityMap.get(t.id) ?? 0,
       maxPerOrder: t.max_per_order ?? 10,
-    })));
+    }));
 
     res.json({
       ...toEventDto(event),
@@ -1350,14 +1406,15 @@ app.get('/api/events/:id/ticket-types', async (req, res) => {
     });
     if (!event) { sendApiError(req, res, 404, 'NOT_FOUND', 'Evento no encontrado'); return; }
 
-    const types = await Promise.all(event.event_ticket_types.map(async (t: any) => ({
+    const availabilityMap = await getAvailabilityMap(event.id, event.event_ticket_types, Boolean(event.has_assigned_seating));
+    const types = event.event_ticket_types.map((t: any) => ({
       id: t.id,
       name: t.ticket_type_name,
       price: Number(t.price_amount),
       serviceFee: Number(t.service_fee_amount),
-      availability: await getTicketTypeAvailability(event.id, t, Boolean(event.has_assigned_seating)),
+      availability: availabilityMap.get(t.id) ?? 0,
       maxPerOrder: t.max_per_order ?? 10,
-    })));
+    }));
 
     res.json(types);
   } catch (error: any) {
@@ -4302,23 +4359,33 @@ app.get('/api/tickets/sold', authMiddleware, async (req, res) => {
       orderBy: { updated_at: 'desc' },
     });
 
-    // For each sold ticket, find the buyer (next version of same ticket_root_id)
-    const results = await Promise.all(tickets.map(async (t) => {
+    // Batch-fetch next versions in a single query to avoid N+1 (pool exhaustion)
+    const nextKeys = tickets
+      .filter(t => t.contract_address && t.ticket_root_id != null && t.version != null)
+      .map(t => ({
+        contract_address: t.contract_address as string,
+        ticket_root_id: t.ticket_root_id as any,
+        version: (t.version as number) + 1,
+      }));
+
+    const nextVersions = nextKeys.length
+      ? await prisma.tickets.findMany({
+          where: { OR: nextKeys },
+          select: { contract_address: true, ticket_root_id: true, version: true, owner_wallet: true },
+        })
+      : [];
+    const buyerByKey = new Map<string, string | null>();
+    for (const nv of nextVersions) {
+      buyerByKey.set(`${nv.contract_address}|${nv.ticket_root_id}|${nv.version}`, nv.owner_wallet ?? null);
+    }
+
+    const results = tickets.map((t) => {
       const tt = t.order_items?.event_ticket_types ?? t.order_items?.event_seat_inventory?.event_ticket_types;
       const evt = tt?.events;
 
-      // The buyer is the owner of the next version
       let buyerWallet: string | null = null;
       if (t.contract_address && t.ticket_root_id != null && t.version != null) {
-        const nextVersion = await prisma.tickets.findFirst({
-          where: {
-            contract_address: t.contract_address,
-            ticket_root_id: t.ticket_root_id,
-            version: t.version + 1,
-          },
-          select: { owner_wallet: true },
-        });
-        buyerWallet = nextVersion?.owner_wallet ?? null;
+        buyerWallet = buyerByKey.get(`${t.contract_address}|${t.ticket_root_id}|${(t.version as number) + 1}`) ?? null;
       }
 
       return {
@@ -4337,7 +4404,7 @@ app.get('/api/tickets/sold', authMiddleware, async (req, res) => {
         } : undefined,
         event: evt ? toEventDto(evt) : undefined,
       };
-    }));
+    });
     res.json(results);
   } catch (error: any) {
     console.error('[TICKETS/SOLD] GET error:', error);
